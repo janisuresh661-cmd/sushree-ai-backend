@@ -1,0 +1,6 @@
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/config-schema.json",
+  "name": "spring-cake-3e86",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-21"
+}
