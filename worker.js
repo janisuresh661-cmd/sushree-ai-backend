@@ -7,107 +7,151 @@ export default {
       "Content-Type": "application/json"
     };
 
+    // CORS preflight
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: cors });
+      return new Response(null, {
+        status: 204,
+        headers: cors
+      });
     }
-
-    const url = new URL(request.url);
 
     // Health check
     if (request.method === "GET") {
       return new Response(
         JSON.stringify({
-          status: "online",
+          online: true,
           message: "Sushree AI is ready."
         }),
-        { status: 200, headers: cors }
+        {
+          status: 200,
+          headers: cors
+        }
       );
     }
 
-    // Chat API
-    if (request.method === "POST") {
-      try {
-        let body = {};
-
-        try {
-          body = await request.json();
-        } catch {
-          body = {};
+    // Only POST is allowed for chat
+    if (request.method !== "POST") {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Method not allowed."
+        }),
+        {
+          status: 405,
+          headers: cors
         }
+      );
+    }
 
-        const message =
-          typeof body.message === "string"
-            ? body.message.trim()
-            : "";
+    try {
+      const body = await request.json();
 
-        if (!message) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error: "Message is required."
-            }),
-            { status: 400, headers: cors }
-          );
-        }
+      const message =
+        typeof body.message === "string"
+          ? body.message.trim()
+          : "";
 
-        // Use Cloudflare Workers AI when an AI binding exists.
-        if (env.AI) {
-          const result = await env.AI.run(
-            "@cf/meta/llama-3.1-8b-instruct",
-            {
-              messages: [
-                {
-                  role: "system",
-                  content:
-                    "You are Sushree AI, a helpful, friendly and intelligent AI assistant."
-                },
-                {
-                  role: "user",
-                  content: message
-                }
-              ]
-            }
-          );
-
-          return new Response(
-            JSON.stringify({
-              success: true,
-              reply:
-                result?.response ||
-                "I couldn't generate a response right now."
-            }),
-            { status: 200, headers: cors }
-          );
-        }
-
-        // Safe response if AI binding has not been connected yet.
-        return new Response(
-          JSON.stringify({
-            success: true,
-            reply:
-              "Sushree AI is online. The AI engine still needs to be connected."
-          }),
-          { status: 200, headers: cors }
-        );
-
-      } catch (error) {
+      if (!message) {
         return new Response(
           JSON.stringify({
             success: false,
-            error: "Backend error.",
-            details: error?.message || "Unknown error"
+            error: "Message is required."
           }),
-          { status: 500, headers: cors }
+          {
+            status: 400,
+            headers: cors
+          }
         );
       }
-    }
 
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: "Method not allowed."
-      }),
-      { status: 405, headers: cors }
-    );
+      // Gemini API key stored securely in Cloudflare
+      if (!env.GEMINI_API_KEY) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "GEMINI_API_KEY is not configured."
+          }),
+          {
+            status: 500,
+            headers: cors
+          }
+        );
+      }
+
+      const geminiResponse = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": env.GEMINI_API_KEY
+          },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [
+                {
+                  text:
+                    "You are Sushree AI, a helpful, friendly and intelligent AI assistant. Answer clearly, naturally and helpfully."
+                }
+              ]
+            },
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    text: message
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      );
+
+      const data = await geminiResponse.json();
+
+      if (!geminiResponse.ok) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Gemini API error.",
+            details: data
+          }),
+          {
+            status: 502,
+            headers: cors
+          }
+        );
+      }
+
+      const reply =
+        data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+        "I couldn't generate a response right now.";
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: reply
+        }),
+        {
+          status: 200,
+          headers: cors
+        }
+      );
+
+    } catch (error) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Server error.",
+          details: error.message
+        }),
+        {
+          status: 500,
+          headers: cors
+        }
+      );
+    }
   }
 };
